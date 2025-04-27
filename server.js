@@ -1,7 +1,7 @@
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
-const { v4: uuidv4 } = require('uuid'); // Importa UUID
+const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 const server = http.createServer(app);
@@ -16,11 +16,25 @@ wss.on('connection', (ws) => {
     clients[id] = ws;
     ws.send(JSON.stringify({ type: 'id', id }));
 
+    // Informar a los demás usuarios que un nuevo usuario se ha conectado
+    for (const otherId in clients) {
+        if (otherId !== id) {
+            clients[otherId].send(JSON.stringify({ type: 'new-user', id }));
+        }
+    }
+
     ws.on('message', (message) => {
         const data = JSON.parse(message);
-        const target = clients[data.target];
-        if (target) {
-            target.send(JSON.stringify({ type: 'signal', from: id, data: data.data }));
+        
+        // Si es un mensaje de señalización, reenviar al target
+        if (data.to && clients[data.to]) {
+            clients[data.to].send(JSON.stringify({ 
+                type: data.type, 
+                from: id, 
+                ...(data.offer && { offer: data.offer }),
+                ...(data.answer && { answer: data.answer }),
+                ...(data.candidate && { candidate: data.candidate })
+            }));
         }
     });
 
