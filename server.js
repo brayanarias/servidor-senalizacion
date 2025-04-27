@@ -1,13 +1,15 @@
 const express = require('express');
-const { v4: uuidv4 } = require('uuid');
-const WebSocket = require('ws');
 const http = require('http');
+const WebSocket = require('ws');
+const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-let clients = {};
+const PORT = process.env.PORT || 3000;
+
+let clients = {}; // Para guardar los clientes conectados
 
 wss.on('connection', (ws) => {
     const id = uuidv4();
@@ -15,57 +17,42 @@ wss.on('connection', (ws) => {
 
     console.log(`Nuevo cliente conectado: ${id}`);
 
-    // Enviar el ID propio al cliente
+    // Enviar el propio ID al cliente
     ws.send(JSON.stringify({ type: 'id', id }));
 
-    // Avisar a todos los demás que llegó un nuevo usuario
+    // Avisar a los demás que hay un nuevo usuario
     broadcast({ type: 'new-user', id }, id);
 
     ws.on('message', (message) => {
-        const data = JSON.parse(message);
+        try {
+            const data = JSON.parse(message);
 
-        if (data.type === 'offer' || data.type === 'answer' || data.type === 'candidate') {
-            const target = clients[data.to];
-            if (target && target.readyState === WebSocket.OPEN) {
-                target.send(JSON.stringify({ ...data, from: id }));
+            if (data.to && clients[data.to]) {
+                clients[data.to].send(JSON.stringify({ ...data, from: id }));
             }
-        } else if (data.type === 'disconnect') {
-            console.log(`Usuario ${id} solicitó desconexión`);
-            cleanup(id);
+        } catch (error) {
+            console.error('Error al procesar mensaje:', error);
         }
     });
 
     ws.on('close', () => {
         console.log(`Cliente desconectado: ${id}`);
-        cleanup(id);
-    });
+        delete clients[id];
 
-    ws.on('error', (error) => {
-        console.error(`Error en la conexión del cliente ${id}:`, error);
-        cleanup(id);
+        // Avisar a los demás que este cliente se desconectó
+        broadcast({ type: 'user-disconnected', id });
     });
 });
 
 function broadcast(message, excludeId = null) {
+    const data = JSON.stringify(message);
     Object.keys(clients).forEach(clientId => {
-        if (clientId !== excludeId && clients[clientId].readyState === WebSocket.OPEN) {
-            clients[clientId].send(JSON.stringify(message));
+        if (clientId !== excludeId) {
+            clients[clientId].send(data);
         }
     });
 }
 
-function cleanup(id) {
-    if (clients[id]) {
-        delete clients[id];
-        broadcast({ type: 'user-disconnected', id });
-    }
-}
-
-app.get('/', (req, res) => {
-    res.send('Servidor de señalización activo');
-});
-
-const PORT = process.env.PORT || 8080;
 server.listen(PORT, () => {
-    console.log(`Servidor de señalización escuchando en puerto ${PORT}`);
+    console.log(`Servidor escuchando en puerto ${PORT}`);
 });
