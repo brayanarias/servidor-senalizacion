@@ -1,48 +1,40 @@
 const express = require('express');
-const http = require('http');
-const WebSocket = require('ws');
-const { v4: uuidv4 } = require('uuid');
-
 const app = express();
-const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
+const http = require('http').Server(app);
+const io = require('socket.io')(http);
+const path = require('path');
 
-const clients = {};
+const usuarios = {};
 
-const PORT = process.env.PORT || 3000;
+app.use(express.static(path.join(__dirname, '/')));
 
-wss.on('connection', (ws) => {
-    const id = uuidv4();
-    clients[id] = ws;
-    ws.send(JSON.stringify({ type: 'id', id }));
+io.on('connection', socket => {
+    usuarios[socket.id] = socket.id;
+    socket.emit('usuarios', Object.keys(usuarios));
+    socket.broadcast.emit('usuarios', [socket.id]);
 
-    // Informar a los demás usuarios que un nuevo usuario se ha conectado
-    for (const otherId in clients) {
-        if (otherId !== id) {
-            clients[otherId].send(JSON.stringify({ type: 'new-user', id }));
-        }
-    }
-
-    ws.on('message', (message) => {
-        const data = JSON.parse(message);
-        
-        // Si es un mensaje de señalización, reenviar al target
-        if (data.to && clients[data.to]) {
-            clients[data.to].send(JSON.stringify({ 
-                type: data.type, 
-                from: id, 
-                ...(data.offer && { offer: data.offer }),
-                ...(data.answer && { answer: data.answer }),
-                ...(data.candidate && { candidate: data.candidate })
-            }));
-        }
+    socket.on('nuevo-usuario', () => {
+        socket.broadcast.emit('usuarios', [socket.id]);
     });
 
-    ws.on('close', () => {
-        delete clients[id];
+    socket.on('offer', data => {
+        io.to(data.to).emit('offer', { from: socket.id, offer: data.offer });
+    });
+
+    socket.on('answer', data => {
+        io.to(data.to).emit('answer', { from: socket.id, answer: data.answer });
+    });
+
+    socket.on('candidate', data => {
+        io.to(data.to).emit('candidate', { from: socket.id, candidate: data.candidate });
+    });
+
+    socket.on('disconnect', () => {
+        delete usuarios[socket.id];
+        socket.broadcast.emit('usuario-desconectado', socket.id);
     });
 });
 
-server.listen(PORT, () => {
-    console.log(`Servidor de señalización escuchando en puerto ${PORT}`);
+http.listen(3000, () => {
+    console.log('Servidor corriendo en puerto 3000');
 });
