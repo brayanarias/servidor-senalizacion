@@ -1,40 +1,45 @@
-const express = require('express');
+import express from 'express';
+import { Server } from 'socket.io';
+import http from 'http';
+import cors from 'cors';
+
 const app = express();
-const http = require('http').Server(app);
-const io = require('socket.io')(http);
-const path = require('path');
+app.use(cors());
+const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: "*" } });
 
-const usuarios = {};
+// Límites de salas
+const ROOM_LIMITS = {
+  auditorio: 100,
+  oficina1: 5,
+  oficina2: 5,
+  // ... añade las 13 oficinas
+};
 
-app.use(express.static(path.join(__dirname, '/')));
+io.on('connection', (socket) => {
+  console.log('Usuario conectado:', socket.id);
 
-io.on('connection', socket => {
-    usuarios[socket.id] = socket.id;
-    socket.emit('usuarios', Object.keys(usuarios));
-    socket.broadcast.emit('usuarios', [socket.id]);
+  socket.on('join-room', (roomId, username) => {
+    const room = io.sockets.adapter.rooms.get(roomId);
+    if (room && room.size >= ROOM_LIMITS[roomId]) {
+      socket.emit('room-full', '¡La sala está llena!');
+      return;
+    }
 
-    socket.on('nuevo-usuario', () => {
-        socket.broadcast.emit('usuarios', [socket.id]);
-    });
+    socket.join(roomId);
+    socket.to(roomId).emit('user-connected', { userId: socket.id, username });
+    socket.emit('room-joined', roomId);
+  });
 
-    socket.on('offer', data => {
-        io.to(data.to).emit('offer', { from: socket.id, offer: data.offer });
-    });
+  // WebRTC: Señales entre pares
+  socket.on('offer', (data) => socket.to(data.target).emit('offer', data));
+  socket.on('answer', (data) => socket.to(data.target).emit('answer', data));
+  socket.on('ice-candidate', (data) => socket.to(data.target).emit('ice-candidate', data));
 
-    socket.on('answer', data => {
-        io.to(data.to).emit('answer', { from: socket.id, answer: data.answer });
-    });
-
-    socket.on('candidate', data => {
-        io.to(data.to).emit('candidate', { from: socket.id, candidate: data.candidate });
-    });
-
-    socket.on('disconnect', () => {
-        delete usuarios[socket.id];
-        socket.broadcast.emit('usuario-desconectado', socket.id);
-    });
+  socket.on('disconnect', () => {
+    io.emit('user-disconnected', socket.id);
+  });
 });
 
-http.listen(3000, () => {
-    console.log('Servidor corriendo en puerto 3000');
-});
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`Servidor en puerto ${PORT}`));
